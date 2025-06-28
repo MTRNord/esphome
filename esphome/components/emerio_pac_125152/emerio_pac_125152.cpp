@@ -492,15 +492,7 @@ void EmerioPac125152Climate::control(const climate::ClimateCall &call) {
         // User wants to change fan/temp while device stays OFF - reject these changes
         ESP_LOGW(TAG, "Device is OFF: ignoring fan/temperature changes to prevent desync");
 
-        // Create a new call with only the mode change (if any)
-        auto corrected_call = this->make_call();
-        if (mode_change) {
-          corrected_call.set_mode(call.get_mode().value());
-          ESP_LOGD(TAG, "Allowing only mode change to %d", to_internal_mode(call.get_mode().value()));
-        }
-
-        // Call base class with corrected call
-        climate_ir::ClimateIR::control(corrected_call);
+        climate_ir::ClimateIR::control(call);
 
         // When device is OFF, ensure we display the state that will be active when device turns ON
         // Don't change mode (it should stay OFF), but ensure fan/temp match what the AC will use
