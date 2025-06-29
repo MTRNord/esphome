@@ -105,8 +105,15 @@ void EmerioPac125152Climate::setup() {
     this->target_temperature_before_ = state->prev_temp;
     this->prev_dehumidify_ = state->prev_dehumidify;
     this->prev_on_off_ = state->prev_on_off;
-
     ESP_LOGD(TAG, "Restored AC hardware tracking state");
+
+    // Use our restored device state
+    this->mode = this->prev_on_off_ ? (this->prev_dehumidify_ ? climate::CLIMATE_MODE_DRY : this->mode_before_)
+                                    : climate::CLIMATE_MODE_OFF;
+    this->fan_mode = this->fan_mode_before_;
+    this->target_temperature = this->target_temperature_before_;
+    ESP_LOGD(TAG, "Overwrote ESPHome state with restored device state");
+
   } else {
     // Default tracking state - assume AC is off with default settings
     this->mode_before_ = climate::CLIMATE_MODE_OFF;
@@ -114,8 +121,13 @@ void EmerioPac125152Climate::setup() {
     this->target_temperature_before_ = TEMP_MIN;
     this->prev_dehumidify_ = false;
     this->prev_on_off_ = false;
-
     ESP_LOGD(TAG, "Using default AC hardware tracking state");
+
+    // Use our default device state
+    this->mode = climate::CLIMATE_MODE_OFF;
+    this->fan_mode = climate::CLIMATE_FAN_LOW;
+    this->target_temperature = TEMP_MIN;
+    ESP_LOGD(TAG, "Overwrote ESPHome state with default device state");
   }
 
   ESP_LOGD(TAG,
@@ -124,36 +136,6 @@ void EmerioPac125152Climate::setup() {
            to_internal_mode(this->mode_before_), to_internal_fan(this->fan_mode_before_),
            this->target_temperature_before_, this->prev_dehumidify_ ? "true" : "false",
            this->prev_on_off_ ? "true" : "false");
-
-  ESP_LOGD(TAG, "ESPHome state BEFORE device override: mode=%d, fan_mode=%d, target_temperature=%.1f",
-           to_internal_mode(this->mode), this->fan_mode.has_value() ? to_internal_fan(this->fan_mode.value()) : -1,
-           this->target_temperature);
-
-  // CRITICAL: Our device state takes priority over parent class defaults
-  // Overwrite ESPHome state with our known device state to ensure perfect sync
-  if (state.has_value()) {
-    // Use our restored device state
-    this->mode = this->prev_on_off_ ? (this->prev_dehumidify_ ? climate::CLIMATE_MODE_DRY : this->mode_before_)
-                                    : climate::CLIMATE_MODE_OFF;
-    this->fan_mode = this->fan_mode_before_;
-    this->target_temperature = this->target_temperature_before_;
-
-    ESP_LOGD(TAG, "Overwrote ESPHome state with restored device state");
-    ESP_LOGD(TAG, "Device is %s, will show: mode=%d, fan=%d, temp=%.1f", this->prev_on_off_ ? "ON" : "OFF",
-             to_internal_mode(this->mode), to_internal_fan(this->fan_mode.value()), this->target_temperature);
-  } else {
-    // Use our default device state
-    this->mode = climate::CLIMATE_MODE_OFF;
-    this->fan_mode = climate::CLIMATE_FAN_LOW;
-    this->target_temperature = TEMP_MIN;
-
-    ESP_LOGD(TAG, "Overwrote ESPHome state with default device state");
-    ESP_LOGD(TAG, "Using defaults: mode=OFF, fan=LOW, temp=%d", TEMP_MIN);
-  }
-
-  ESP_LOGD(TAG, "ESPHome state AFTER device override: mode=%d, fan_mode=%d, target_temperature=%.1f",
-           to_internal_mode(this->mode), this->fan_mode.has_value() ? to_internal_fan(this->fan_mode.value()) : -1,
-           this->target_temperature);
 
   // NOTE: We deliberately DO NOT sync ESPHome state with our tracking state here
   // This avoids sending unwanted IR commands on startup
@@ -177,17 +159,16 @@ void EmerioPac125152Climate::send_nec_command_(uint16_t command) {
 void EmerioPac125152Climate::transmit_state() {
   // Validate ESPHome state before proceeding
   if (!this->fan_mode.has_value()) {
-    ESP_LOGE(TAG, "Fan mode not set! Defaulting to LOW");
-    this->fan_mode = climate::CLIMATE_FAN_LOW;
+    ESP_LOGE(TAG, "Fan mode not set! Defaulting to last known");
+    this->fan_mode = this->fan_mode_before_;
   }
 
   // Validate fan mode value
   climate::ClimateFanMode current_fan = this->fan_mode.value();
   if (current_fan != climate::CLIMATE_FAN_LOW && current_fan != climate::CLIMATE_FAN_MEDIUM &&
       current_fan != climate::CLIMATE_FAN_HIGH) {
-    ESP_LOGE(TAG, "Invalid fan mode %d! Defaulting to LOW", to_internal_fan(current_fan));
-    this->fan_mode = climate::CLIMATE_FAN_LOW;
-    current_fan = climate::CLIMATE_FAN_LOW;
+    ESP_LOGE(TAG, "Invalid fan mode %d! Defaulting to last known", to_internal_fan(current_fan));
+    this->fan_mode = this->fan_mode_before_;
   }
 
   // Save previous state for cycling math

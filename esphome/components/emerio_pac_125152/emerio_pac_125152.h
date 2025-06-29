@@ -92,12 +92,12 @@ class EmerioPac125152Climate : public climate_ir::ClimateIR {
 
   // Internal state tracking - what we think the AC hardware is set to
   climate::ClimateMode mode_before_{climate::CLIMATE_MODE_OFF};
-  climate::ClimateFanMode fan_mode_before_{climate::CLIMATE_FAN_AUTO};
+  climate::ClimateFanMode fan_mode_before_{climate::CLIMATE_FAN_LOW};
   float target_temperature_before_{TEMP_MIN};
   bool prev_dehumidify_{false};
-  bool prev_on_off_{false};                                            // true if the device was ON, false if it was OFF
-  climate::ClimateFanMode fan_before_dry_{climate::CLIMATE_FAN_AUTO};  // Fan setting before entering DRY mode
-  uint32_t setpoint_busy_until_{0};                                    // Not saved
+  bool prev_on_off_{false};                                           // true if the device was ON, false if it was OFF
+  climate::ClimateFanMode fan_before_dry_{climate::CLIMATE_FAN_LOW};  // Fan setting before entering DRY mode
+  uint32_t setpoint_busy_until_{0};                                   // Not saved
 
   // Helper to send NEC command
   void send_nec_command_(uint16_t command);
