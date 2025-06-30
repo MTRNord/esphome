@@ -98,6 +98,7 @@ class EmerioPac125152Climate : public climate_ir::ClimateIR {
   bool prev_on_off_{false};                                           // true if the device was ON, false if it was OFF
   climate::ClimateFanMode fan_before_dry_{climate::CLIMATE_FAN_LOW};  // Fan setting before entering DRY mode
   uint32_t setpoint_busy_until_{0};                                   // Not saved
+  uint32_t last_state_save_{0};  // Timestamp of last state save to prevent excessive flash writes
 
   // Helper to send NEC command
   void send_nec_command_(uint16_t command);
