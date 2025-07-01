@@ -107,8 +107,21 @@ class EmerioPac125152Climate : public climate_ir::ClimateIR {
   optional<EmerioPac125152ClimateDeviceRestoreState> restore_emerio_pac_state_();
   void save_emerio_pac_state_();
 
-  // Helper to sync all state variables consistently
+  // State validation and management helpers
+  bool is_fan_mode_supported_(climate::ClimateFanMode fan_mode);
+  void ensure_valid_fan_mode_();
+  bool validate_device_state_(const EmerioPac125152ClimateDeviceRestoreState &state);
+  void apply_device_state_(const EmerioPac125152ClimateDeviceRestoreState &state);
+  void initialize_default_device_state_();
+  void sync_display_state_();
   void sync_all_state_variables_();
+
+  // Transmit state helpers
+  void validate_esphome_state_();
+  bool handle_power_off_();
+  void handle_power_on_();
+  void handle_mode_and_fan_changes_();
+  void handle_temperature_change_();
 };
 
 template<typename... Ts> class CalibrateStateAction : public Action<Ts...> {
