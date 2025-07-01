@@ -248,8 +248,9 @@ climate::ClimateTraits EmerioPac125152Climate::traits() {
 void EmerioPac125152Climate::send_nec_command_(uint16_t command) {
   // We send 3 repeats to ensure it actually receives the command
   this->transmit_<remote_base::NECProtocol>({ADDRESS, command, 3});
-  // Sleep for a short time to allow the device to process the command
-  delay(20);
+  // Sleep for sufficient time to allow the device to process the command
+  // Increased from 20ms to 100ms for better reliability with multiple commands
+  delay(100);
 }
 
 void EmerioPac125152Climate::validate_esphome_state_() {
