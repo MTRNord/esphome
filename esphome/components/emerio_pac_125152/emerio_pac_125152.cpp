@@ -394,6 +394,12 @@ void EmerioPac125152Climate::handle_temperature_change_() {
     return;
   }
 
+  // FAN_ONLY mode doesn't support temperature setpoints
+  if (this->mode == climate::CLIMATE_MODE_FAN_ONLY) {
+    ESP_LOGD(TAG, "FAN_ONLY mode, skipping temperature commands");
+    return;
+  }
+
   int temp_diff = int(roundf(this->target_temperature)) - int(roundf(this->target_temperature_before_));
   if (temp_diff == 0)
     return;
@@ -476,6 +482,13 @@ void EmerioPac125152Climate::control(const climate::ClimateCall &call) {
   if (fan_change && !this->is_fan_mode_supported_(call.get_fan_mode().value())) {
     ESP_LOGW(TAG, "Rejecting unsupported fan mode %d (AUTO=%d)", (int) call.get_fan_mode().value(),
              (int) climate::CLIMATE_FAN_AUTO);
+    this->publish_state();
+    return;
+  }
+
+  // Reject temperature changes in FAN_ONLY mode
+  if (temp_change && this->mode == climate::CLIMATE_MODE_FAN_ONLY) {
+    ESP_LOGW(TAG, "FAN_ONLY mode: ignoring temperature setpoint changes");
     this->publish_state();
     return;
   }
