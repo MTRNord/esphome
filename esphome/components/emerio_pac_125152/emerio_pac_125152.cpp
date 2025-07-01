@@ -1,5 +1,5 @@
 #include "emerio_pac_125152.h"
-#include "esphome/core/log.h"
+#include "esphome/core/util.h"
 
 namespace esphome {
 namespace emerio_pac_125152 {
@@ -215,6 +215,44 @@ void EmerioPac125152Climate::setup() {
            to_internal_mode(this->mode_before_), this->prev_on_off_ ? "ON" : "OFF");
 }
 
+void EmerioPac125152Climate::loop() {
+#ifdef USE_API
+  // Detect API reconnections and restore device state if needed
+  // Using ESPHome's core utility function for idiomatic API connection checking
+  bool is_connected = api_is_connected();
+
+  if (is_connected && !this->was_api_connected_) {
+    // API just reconnected - restore device state to prevent desync
+    ESP_LOGI(TAG, "API reconnected - restoring device state to prevent desync");
+
+    // Force ESPHome state to match our device tracking
+    if (!this->prev_on_off_) {
+      // Device is OFF - ensure HA shows OFF with correct standby settings
+      this->mode = climate::CLIMATE_MODE_OFF;
+      this->fan_mode = this->fan_mode_before_;
+      this->target_temperature = this->target_temperature_before_;
+    } else if (this->prev_dehumidify_) {
+      // Device is in DRY mode
+      this->mode = climate::CLIMATE_MODE_DRY;
+      this->fan_mode = climate::CLIMATE_FAN_LOW;  // DRY mode always uses LOW fan
+      this->target_temperature = this->target_temperature_before_;
+    } else {
+      // Device is ON in normal mode
+      this->mode = this->mode_before_;
+      this->fan_mode = this->fan_mode_before_;
+      this->target_temperature = this->target_temperature_before_;
+    }
+
+    ESP_LOGI(TAG, "Restored to device state: mode=%d, fan=%d, temp=%.1f, on_off=%s", to_internal_mode(this->mode),
+             to_internal_fan(this->fan_mode.value()), this->target_temperature, this->prev_on_off_ ? "ON" : "OFF");
+
+    this->publish_state();
+  }
+
+  this->was_api_connected_ = is_connected;
+#endif
+}
+
 void EmerioPac125152Climate::sync_display_state_() {
   // Ensure HA shows the correct state based on device tracking
   if (!this->prev_on_off_) {
@@ -250,7 +288,7 @@ void EmerioPac125152Climate::send_nec_command_(uint16_t command) {
   this->transmit_<remote_base::NECProtocol>({ADDRESS, command, 3});
   // Sleep for sufficient time to allow the device to process the command
   // Increased from 20ms to 100ms for better reliability with multiple commands
-  delay(100);
+  delay(100);  // NOLINT
 }
 
 void EmerioPac125152Climate::validate_esphome_state_() {
@@ -432,6 +470,17 @@ void EmerioPac125152Climate::handle_temperature_change_() {
 
 void EmerioPac125152Climate::calibrate_state(climate::ClimateMode mode, float temperature,
                                              climate::ClimateFanMode fan_mode) {
+  // Debug logging: Print both ESPHome and device states before calibration
+  // This allows debugging of state mismatches and tracking what the calibration is changing
+  ESP_LOGI(TAG, "CALIBRATION - Current ESPHome state: mode=%d, fan=%d, temp=%.1f", to_internal_mode(this->mode),
+           to_internal_fan(this->fan_mode.value_or(climate::CLIMATE_FAN_LOW)), this->target_temperature);
+  ESP_LOGI(TAG, "CALIBRATION - Current device state: mode=%d, fan=%d, temp=%.1f, on_off=%s, dehumidify=%s",
+           to_internal_mode(this->mode_before_), to_internal_fan(this->fan_mode_before_),
+           this->target_temperature_before_, this->prev_on_off_ ? "ON" : "OFF",
+           this->prev_dehumidify_ ? "true" : "false");
+  ESP_LOGI(TAG, "CALIBRATION - Setting to: mode=%d, fan=%d, temp=%.1f", to_internal_mode(mode),
+           to_internal_fan(fan_mode), temperature);
+
   // Validate inputs before setting state
   if (temperature < TEMP_MIN || temperature > TEMP_MAX) {
     ESP_LOGE(TAG, "Invalid temperature %.1f, clamping to range [%d, %d]", temperature, TEMP_MIN, TEMP_MAX);

@@ -3,6 +3,9 @@
 #include "esphome/components/climate_ir/climate_ir.h"
 #include "esphome/components/remote_base/nec_protocol.h"
 #include "esphome/core/automation.h"
+#ifdef USE_API
+#include "esphome/components/api/api_server.h"
+#endif
 #include <cinttypes>
 
 namespace esphome {
@@ -78,6 +81,7 @@ class EmerioPac125152Climate : public climate_ir::ClimateIR {
   climate::ClimateTraits traits() override;
   void setup() override;
   void control(const climate::ClimateCall &call) override;
+  void loop() override;
 
   // Manual state calibration
   void calibrate_state(climate::ClimateMode mode, float temperature, climate::ClimateFanMode fan_mode);
@@ -122,6 +126,11 @@ class EmerioPac125152Climate : public climate_ir::ClimateIR {
   void handle_power_on_();
   void handle_mode_and_fan_changes_();
   void handle_temperature_change_();
+
+#ifdef USE_API
+  // API connection tracking for desync detection
+  bool was_api_connected_{false};
+#endif
 };
 
 template<typename... Ts> class CalibrateStateAction : public Action<Ts...> {
