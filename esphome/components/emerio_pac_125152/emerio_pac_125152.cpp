@@ -82,7 +82,8 @@ void EmerioPac125152Climate::sync_all_state_variables_() {
     climate::ClimateFanMode current_fan = this->fan_mode.value();
     if (current_fan != climate::CLIMATE_FAN_LOW && current_fan != climate::CLIMATE_FAN_MEDIUM &&
         current_fan != climate::CLIMATE_FAN_HIGH) {
-      ESP_LOGW(TAG, "Invalid fan mode %d during sync, correcting to LOW", to_internal_fan(current_fan));
+      ESP_LOGW(TAG, "Unsupported fan mode %d (AUTO=%d) during sync, correcting to LOW", (int) current_fan,
+               (int) climate::CLIMATE_FAN_AUTO);
       this->fan_mode = climate::CLIMATE_FAN_LOW;
     }
   }
@@ -118,10 +119,24 @@ void EmerioPac125152Climate::setup() {
   // Initialize base class first - this handles ESPHome's robust state restoration automatically
   climate_ir::ClimateIR::setup();
 
+  // CRITICAL: ClimateIR::setup() sets fan_mode to AUTO - we must override this!
+  // The base class wrongly assumes all IR devices support AUTO mode
+  ESP_LOGD(TAG, "ClimateIR::setup() set fan_mode to %d (AUTO=%d) - overriding",
+           (int) this->fan_mode.value_or((climate::ClimateFanMode) -1), (int) climate::CLIMATE_FAN_AUTO);
+
   // Add NaN protection like the base class does
   if (std::isnan(this->target_temperature)) {
-    ESP_LOGW(TAG, "Target temperature was NaN, defaulting to 24°C");
-    this->target_temperature = 24.0f;
+    ESP_LOGW(TAG, "Target temperature was NaN, defaulting to %d°C", TEMP_MIN + 3);
+    this->target_temperature = TEMP_MIN + 3;  // 18°C (15 + 3)
+  }
+
+  // Handle unsupported fan modes that ClimateIR::setup() might have set
+  if (this->fan_mode.has_value()) {
+    climate::ClimateFanMode base_fan = this->fan_mode.value();
+    if (base_fan != climate::CLIMATE_FAN_LOW && base_fan != climate::CLIMATE_FAN_MEDIUM &&
+        base_fan != climate::CLIMATE_FAN_HIGH) {
+      ESP_LOGW(TAG, "ClimateIR set unsupported fan mode %d, will override with device state", (int) base_fan);
+    }
   }
 
   ESP_LOGD(TAG, "ESPHome restored state: mode=%d, fan_mode=%d, target_temperature=%.1f", to_internal_mode(this->mode),
@@ -170,20 +185,25 @@ void EmerioPac125152Climate::setup() {
 
   if (!device_state.has_value()) {
     // No valid device state - initialize tracking from ESPHome's restored state
-    // ESPHome already restored the best state it could from flash
+    // ESPHome already restored the best state it could from flash - USE THAT!
     this->mode_before_ = (this->mode != climate::CLIMATE_MODE_OFF && this->mode != climate::CLIMATE_MODE_DRY)
                              ? this->mode
                              : climate::CLIMATE_MODE_AUTO;
-    this->fan_mode_before_ = this->fan_mode.has_value() ? this->fan_mode.value() : climate::CLIMATE_FAN_LOW;
-    this->target_temperature_before_ = this->target_temperature;
+    this->fan_mode_before_ = climate::CLIMATE_FAN_LOW;            // ALWAYS start with LOW if no device state
+    this->target_temperature_before_ = this->target_temperature;  // Use ESPHome's restored temperature
     this->prev_dehumidify_ = (this->mode == climate::CLIMATE_MODE_DRY);
     this->prev_on_off_ = (this->mode != climate::CLIMATE_MODE_OFF);
 
-    ESP_LOGD(TAG, "Initialized device tracking from ESPHome state");
+    ESP_LOGD(TAG, "Initialized device tracking from ESPHome state: temp=%.1f", this->target_temperature);
 
     // Save the initial tracking state
     this->save_emerio_pac_state_();
   }
+
+  // CRITICAL: After device state is restored/initialized, ALWAYS override ESPHome fan mode
+  // ClimateIR::setup() sets fan_mode to AUTO which we don't support
+  this->fan_mode = this->fan_mode_before_;
+  ESP_LOGI(TAG, "Overrode ESPHome fan_mode with device state: %d", to_internal_fan(this->fan_mode_before_));
 
   // Sync ESPHome display state with device tracking for consistency
   // This ensures HA shows the correct state regardless of what ESPHome restored
@@ -229,13 +249,14 @@ void EmerioPac125152Climate::transmit_state() {
     this->fan_mode = this->fan_mode_before_;
   }
 
-  // Validate fan mode value
+  // Validate fan mode value - handle unsupported modes gracefully
   climate::ClimateFanMode current_fan = this->fan_mode.value();
   if (current_fan != climate::CLIMATE_FAN_LOW && current_fan != climate::CLIMATE_FAN_MEDIUM &&
       current_fan != climate::CLIMATE_FAN_HIGH) {
-    ESP_LOGW(TAG, "Invalid fan mode %d! Using last known device fan mode %d", to_internal_fan(current_fan),
-             to_internal_fan(this->fan_mode_before_));
+    ESP_LOGW(TAG, "Unsupported fan mode %d (AUTO=%d)! Using last known device fan mode %d", (int) current_fan,
+             (int) climate::CLIMATE_FAN_AUTO, to_internal_fan(this->fan_mode_before_));
     this->fan_mode = this->fan_mode_before_;
+    current_fan = this->fan_mode_before_;
   }
 
   // Validate temperature
@@ -536,6 +557,20 @@ void EmerioPac125152Climate::control(const climate::ClimateCall &call) {
   bool fan_change = call.get_fan_mode().has_value();
   bool temp_change = call.get_target_temperature().has_value();
 
+  // Validate and reject unsupported fan modes early
+  if (fan_change) {
+    climate::ClimateFanMode requested_fan = call.get_fan_mode().value();
+    if (requested_fan != climate::CLIMATE_FAN_LOW && requested_fan != climate::CLIMATE_FAN_MEDIUM &&
+        requested_fan != climate::CLIMATE_FAN_HIGH) {
+      ESP_LOGW(TAG, "Rejecting unsupported fan mode %d (AUTO=%d). Device only supports LOW/MEDIUM/HIGH.",
+               (int) requested_fan, (int) climate::CLIMATE_FAN_AUTO);
+
+      // Don't process this call, just ensure we display current valid state
+      this->publish_state();
+      return;
+    }
+  }
+
   // If device is OFF, only allow mode changes (to turn it ON)
   if (device_currently_off) {
     if (fan_change || temp_change) {
@@ -567,6 +602,18 @@ void EmerioPac125152Climate::control(const climate::ClimateCall &call) {
   // If we get here, either device is ON or user is only changing mode
   // Call the base class implementation
   climate_ir::ClimateIR::control(call);
+
+  // CRITICAL: After base class processes the call, validate fan mode again
+  // This catches cases where HA sends AUTO mode after API reconnection
+  if (this->fan_mode.has_value()) {
+    climate::ClimateFanMode processed_fan = this->fan_mode.value();
+    if (processed_fan != climate::CLIMATE_FAN_LOW && processed_fan != climate::CLIMATE_FAN_MEDIUM &&
+        processed_fan != climate::CLIMATE_FAN_HIGH) {
+      ESP_LOGW(TAG, "Base class set unsupported fan mode %d after control() - reverting to device state %d",
+               (int) processed_fan, to_internal_fan(this->fan_mode_before_));
+      this->fan_mode = this->fan_mode_before_;
+    }
+  }
 
   // After the base class has updated this->mode, this->fan_mode, etc.,
   // check if we need to sync our tracking state
